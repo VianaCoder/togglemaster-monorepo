@@ -1,0 +1,220 @@
+# =============================================================================
+# ToggleMaster — Local Development Environment
+# =============================================================================
+# Infrastructure (4 local stores):
+#   • postgres-auth   — PostgreSQL for auth-service          (host port 5433)
+#   • postgres-flags  — PostgreSQL for flag + targeting svc  (host port 5434)
+#   • redis           — Redis for evaluation-service         (host port 6379)
+#   • localstack      — SQS + DynamoDB Local                 (host port 4566)
+#
+# Application services:
+#   • auth-service        :8001
+#   • flag-service        :8002
+#   • targeting-service   :8003
+#   • evaluation-service  :8004
+#   • analytics-service   :8005
+#
+# Usage:
+#   docker compose up --build
+#
+# First-time API key setup for evaluation-service:
+#   1. Create a service key:
+#        curl -s -X POST http://localhost:8001/admin/keys \
+#          -H "Content-Type: application/json" \
+#          -H "Authorization: Bearer local-master-key-dev" \
+#          -d '{"name": "evaluation-service-key"}'
+#   2. Copy the returned "key" value into the SERVICE_API_KEY variable below,
+#      then restart: docker compose up -d evaluation-service
+# =============================================================================
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # Infrastructure
+  # ---------------------------------------------------------------------------
+
+  postgres-auth:
+    image: postgres:16-alpine
+    container_name: tm-postgres-auth
+    environment:
+      POSTGRES_DB: auth_db
+      POSTGRES_USER: auth_user
+      POSTGRES_PASSWORD: auth_pass
+    volumes:
+      - postgres_auth_data:/var/lib/postgresql/data
+      - ./auth-service/db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U auth_user -d auth_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres-flags:
+    image: postgres:16-alpine
+    container_name: tm-postgres-flags
+    # flag-service and targeting-service share one PostgreSQL instance.
+    # Their schemas (tables: flags, targeting_rules) are initialised in order.
+    environment:
+      POSTGRES_DB: flags_db
+      POSTGRES_USER: flags_user
+      POSTGRES_PASSWORD: flags_pass
+    volumes:
+      - postgres_flags_data:/var/lib/postgresql/data
+      - ./flag-service/db/init.sql:/docker-entrypoint-initdb.d/01_flags.sql:ro
+      - ./targeting-service/db/init.sql:/docker-entrypoint-initdb.d/02_targeting.sql:ro
+    ports:
+      - "5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flags_user -d flags_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: tm-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  localstack:
+    image: localstack/localstack:3
+    container_name: tm-localstack
+    ports:
+      - "4566:4566"
+    environment:
+      - SERVICES=sqs,dynamodb
+      - DEBUG=0
+      - AWS_DEFAULT_REGION=us-east-1
+    volumes:
+      - localstack_data:/var/lib/localstack
+      # Init script runs automatically when LocalStack is ready.
+      # Creates: SQS queue "toggle-master-events" + DynamoDB table "ToggleMasterAnalytics"
+      - ./scripts/localstack-init.sh:/etc/localstack/init/ready.d/init.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:4566/_localstack/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+
+  # ---------------------------------------------------------------------------
+  # Application services
+  # ---------------------------------------------------------------------------
+
+  auth-service:
+    build:
+      context: ./auth-service
+      dockerfile: Dockerfile
+    container_name: tm-auth-service
+    environment:
+      DATABASE_URL: postgresql://auth_user:auth_pass@postgres-auth:5432/auth_db
+      MASTER_KEY: local-master-key-dev
+      PORT: "8001"
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres-auth:
+        condition: service_healthy
+    restart: on-failure
+
+  flag-service:
+    build:
+      context: ./flag-service
+      dockerfile: Dockerfile
+    container_name: tm-flag-service
+    environment:
+      DATABASE_URL: postgresql://flags_user:flags_pass@postgres-flags:5432/flags_db
+      AUTH_SERVICE_URL: http://auth-service:8001
+      PORT: "8002"
+    ports:
+      - "8002:8002"
+    depends_on:
+      postgres-flags:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+    restart: on-failure
+
+  targeting-service:
+    build:
+      context: ./targeting-service
+      dockerfile: Dockerfile
+    container_name: tm-targeting-service
+    environment:
+      DATABASE_URL: postgresql://flags_user:flags_pass@postgres-flags:5432/flags_db
+      AUTH_SERVICE_URL: http://auth-service:8001
+      PORT: "8003"
+    ports:
+      - "8003:8003"
+    depends_on:
+      postgres-flags:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+    restart: on-failure
+
+  evaluation-service:
+    build:
+      context: ./evaluation-service
+      dockerfile: Dockerfile
+    container_name: tm-evaluation-service
+    environment:
+      REDIS_URL: redis://redis:6379
+      FLAG_SERVICE_URL: http://flag-service:8002
+      TARGETING_SERVICE_URL: http://targeting-service:8003
+      AWS_REGION: us-east-1
+      AWS_SQS_URL: http://localstack:4566/000000000000/toggle-master-events
+      AWS_ENDPOINT_URL: http://localstack:4566
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      PORT: "8004"
+      # Set SERVICE_API_KEY after creating a key via auth-service (see header comment).
+      SERVICE_API_KEY: ${SERVICE_API_KEY:-}
+    ports:
+      - "8004:8004"
+    depends_on:
+      redis:
+        condition: service_healthy
+      flag-service:
+        condition: service_started
+      targeting-service:
+        condition: service_started
+    restart: on-failure
+
+  analytics-service:
+    build:
+      context: ./analytics-service
+      dockerfile: Dockerfile
+    container_name: tm-analytics-service
+    environment:
+      AWS_REGION: us-east-1
+      # LocalStack SQS endpoint — account ID 000000000000 is LocalStack's default.
+      AWS_SQS_URL: http://localstack:4566/000000000000/toggle-master-events
+      AWS_DYNAMODB_TABLE: ToggleMasterAnalytics
+      # Dummy credentials satisfy boto3; LocalStack accepts any value.
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      # boto3 >=1.28 honours this env var to redirect all API calls to LocalStack.
+      AWS_ENDPOINT_URL: http://localstack:4566
+      PORT: "8005"
+    ports:
+      - "8005:8005"
+    depends_on:
+      localstack:
+        condition: service_healthy
+    restart: on-failure
+
+# =============================================================================
+# Named volumes (persistent across restarts, removed with: docker compose down -v)
+# =============================================================================
+volumes:
+  postgres_auth_data:
+  postgres_flags_data:
+  localstack_data:

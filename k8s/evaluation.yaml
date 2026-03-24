@@ -1,0 +1,81 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: evaluation-config
+  namespace: ns-evaluation
+data:
+  PORT: "8004"
+  AWS_REGION: "us-east-2"
+  FLAG_SERVICE_URL: http://flag-service.ns-flag.svc.cluster.local:8002
+  TARGETING_SERVICE_URL: http://targeting-service.ns-targeting.svc.cluster.local:8003
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: evaluation-secret
+  namespace: ns-evaluation
+type: Opaque
+stringData:
+  REDIS_URL: "REDACTED_REDIS_URL"
+  AWS_SQS_URL: "https://sqs.<AWS_REGION>.amazonaws.com/<AWS_ACCOUNT_ID>/toggle-master-events"
+  SERVICE_API_KEY: "REDACTED_SERVICE_API_KEY"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: evaluation-service
+  namespace: ns-evaluation
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: evaluation-service
+  template:
+    metadata:
+      labels:
+        app: evaluation-service
+    spec:
+      containers:
+        - name: evaluation-service
+          image: <AWS_ACCOUNT_ID>.dkr.ecr.<AWS_REGION>.amazonaws.com/evaluation-service:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8004
+          envFrom:
+            - configMapRef:
+                name: evaluation-config
+            - secretRef:
+                name: evaluation-secret
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8004
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8004
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: "150m"
+              memory: "192Mi"
+            limits:
+              cpu: "700m"
+              memory: "768Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: evaluation-service
+  namespace: ns-evaluation
+spec:
+  type: ClusterIP
+  selector:
+    app: evaluation-service
+  ports:
+    - name: http
+      port: 8004
+      targetPort: 8004
