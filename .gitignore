@@ -1,0 +1,29 @@
+# Terraform state files
+*.tfstate
+*.tfstate.*
+.terraform/
+tfplan
+*.tfplan
+terraform.tfvars.local
+*.auto.tfvars
+*.auto.tfvars.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local env
+.env
+.env.local
+*.log
+
+# Build artifacts
+dist/
+build/
+node_modules/

@@ -1,51 +1,45 @@
 # GitOps
 
-Estrutura GitOps para deploy continuo com ArgoCD.
+Este diretorio concentra os manifests do cluster.
 
 ## Estrutura
 
-- `gitops/platform`: namespaces, ingress e KEDA
-- `gitops/services/*`: manifests dos 5 microsservicos
-- `gitops/argocd/applications`: Applications do ArgoCD
+- `argocd/applications/`: Applications do Argo CD.
+- `platform/`: namespaces, ingress e KEDA.
+- `services/`: manifests por microsservico.
 
-## Instalar ArgoCD no EKS
+## Uso
 
-```bash
-kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
-helm repo add argo https://argoproj.github.io/argo-helm
-helm repo update
-helm upgrade --install argocd argo/argo-cd -n argocd --set server.service.type=LoadBalancer
-kubectl -n argocd rollout status deployment/argocd-server --timeout=300s
-kubectl -n argocd rollout status deployment/argocd-application-controller --timeout=300s
-```
-
-## Criar Applications no ArgoCD
+Aplicar applications:
 
 ```bash
-kubectl apply -f gitops/argocd/applications/platform.yaml
-kubectl apply -f gitops/argocd/applications/auth-service.yaml
-kubectl apply -f gitops/argocd/applications/flag-service.yaml
-kubectl apply -f gitops/argocd/applications/targeting-service.yaml
-kubectl apply -f gitops/argocd/applications/evaluation-service.yaml
-kubectl apply -f gitops/argocd/applications/analytics-service.yaml
+kubectl apply -f gitops/argocd/applications/
 ```
 
-## Acessar interface do ArgoCD
+Aplicar recursos compartilhados:
 
 ```bash
-kubectl -n argocd port-forward svc/argocd-server 8080:443
+kubectl apply -f gitops/platform/
 ```
 
-Abrir: `https://localhost:8080`
+## Segredos
 
-Senha inicial do admin:
+Os valores reais nao ficam no repositorio.
+
+- Os manifests mantem apenas a estrutura.
+- Os secrets reais devem ser aplicados por CI/CD ou operacao manual controlada.
+- As Applications usam `RespectIgnoreDifferences` para nao sobrescrever `data` e `stringData`.
+
+## Fluxo
+
+- CI publica imagem no ECR.
+- CI atualiza tag em `gitops/services/<servico>/deployment.yaml`.
+- Argo CD sincroniza no cluster.
+
+## Comandos uteis
 
 ```bash
-kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d
+kubectl get application -n argocd
+kubectl get application <name> -n argocd -o wide
+kubectl logs -n argocd deployment/argocd-application-controller
 ```
-
-## Fluxo CD
-
-- CI builda e envia imagem para ECR
-- CI atualiza a tag da imagem em `gitops/services/<service>/deployment.yaml`
-- ArgoCD detecta mudanca no repositório e sincroniza automaticamente no cluster

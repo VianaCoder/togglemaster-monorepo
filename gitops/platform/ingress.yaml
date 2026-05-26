@@ -44,13 +44,13 @@ metadata:
   namespace: ns-targeting
   annotations:
     nginx.ingress.kubernetes.io/use-regex: "true"
-    nginx.ingress.kubernetes.io/rewrite-target: /rules$1
+    nginx.ingress.kubernetes.io/rewrite-target: $1
 spec:
   ingressClassName: nginx
   rules:
     - http:
         paths:
-          - path: /targeting(/.*)?
+          - path: /targeting(.*)
             pathType: ImplementationSpecific
             backend:
               service:
@@ -64,14 +64,19 @@ metadata:
   name: evaluation-ingress
   namespace: ns-evaluation
   annotations:
-    nginx.ingress.kubernetes.io/use-regex: "true"
     nginx.ingress.kubernetes.io/rewrite-target: /evaluate
 spec:
   ingressClassName: nginx
   rules:
     - http:
         paths:
-          - path: /evaluation/?$
+          - path: /evaluation/evaluate
+            pathType: Prefix
+            backend:
+              service:
+                name: evaluation-service
+                port:
+                  number: 8004
             pathType: ImplementationSpecific
             backend:
               service:

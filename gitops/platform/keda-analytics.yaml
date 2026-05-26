@@ -41,9 +41,9 @@ spec:
   triggers:
     - type: aws-sqs-queue
       metadata:
-        queueURL: "https://sqs.<AWS_REGION>.amazonaws.com/<AWS_ACCOUNT_ID>/toggle-master-events"
+        queueURL: "https://sqs.us-east-1.amazonaws.com/127214161915/toggle-master-events"
         identityOwner: "operator"
         queueLength: "5"
         activationQueueLength: "1"
-        awsRegion: "us-east-2"
+        awsRegion: "us-east-1"
         scaleOnInFlight: "true"

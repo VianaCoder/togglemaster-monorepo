@@ -5,6 +5,14 @@ metadata:
   namespace: argocd
 spec:
   project: default
+  ignoreDifferences:
+    - group: ""
+      kind: Secret
+      name: analytics-secret
+      namespace: ns-analytics
+      jsonPointers:
+        - /data
+        - /stringData
   source:
     repoURL: https://github.com/VianaCoder/togglemaster-monorepo.git
     targetRevision: main
@@ -18,4 +26,5 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+      - RespectIgnoreDifferences=true
       - ServerSideApply=true
