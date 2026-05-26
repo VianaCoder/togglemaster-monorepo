@@ -4,5 +4,12 @@
 crash.log
 crash.*.log
 *.tfvars
-!.terraform.tfvars.example
+!*.tfvars.example
 .terraform.lock.hcl
+tfplan
+*.tfplan
+*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
