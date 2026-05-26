@@ -99,7 +99,7 @@ jobs:
         run: bandit -r . -f txt -ll
 
       - name: Run Trivy filesystem scan (SCA + source scan, fail on CRITICAL)
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@0.28.0
         with:
           scan-type: fs
           scan-ref: ${{ env.SERVICE_PATH }}
@@ -127,7 +127,7 @@ jobs:
         run: docker build -t ${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }} ${{ env.SERVICE_PATH }}
 
       - name: Trivy image scan (fail on CRITICAL)
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@0.28.0
         with:
           image-ref: ${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
           format: table
