@@ -224,6 +224,3 @@ Recomendacoes para publicacao:
 - Rotacionar chaves e tokens se houver exposicao previa
 - Proteger branches principais com review e secret scanning
 
-## Licenca
-
-Defina a licenca do projeto antes de publicar (exemplo: MIT).
