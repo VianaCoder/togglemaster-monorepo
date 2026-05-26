@@ -11,13 +11,23 @@ Estrutura GitOps para deploy continuo com ArgoCD.
 ## Instalar ArgoCD no EKS
 
 ```bash
-bash gitops/argocd/install.sh
+kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
+helm repo add argo https://argoproj.github.io/argo-helm
+helm repo update
+helm upgrade --install argocd argo/argo-cd -n argocd --set server.service.type=LoadBalancer
+kubectl -n argocd rollout status deployment/argocd-server --timeout=300s
+kubectl -n argocd rollout status deployment/argocd-application-controller --timeout=300s
 ```
 
 ## Criar Applications no ArgoCD
 
 ```bash
-bash gitops/argocd/bootstrap-apps.sh
+kubectl apply -f gitops/argocd/applications/platform.yaml
+kubectl apply -f gitops/argocd/applications/auth-service.yaml
+kubectl apply -f gitops/argocd/applications/flag-service.yaml
+kubectl apply -f gitops/argocd/applications/targeting-service.yaml
+kubectl apply -f gitops/argocd/applications/evaluation-service.yaml
+kubectl apply -f gitops/argocd/applications/analytics-service.yaml
 ```
 
 ## Acessar interface do ArgoCD
