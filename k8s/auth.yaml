@@ -6,16 +6,6 @@ metadata:
 data:
   PORT: "8001"
 ---
-apiVersion: v1
-kind: Secret
-metadata:
-  name: auth-secret
-  namespace: ns-auth
-type: Opaque
-stringData:
-  DATABASE_URL: "REDACTED_DATABASE_URL"
-  MASTER_KEY: "REDACTED_MASTER_KEY"
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
