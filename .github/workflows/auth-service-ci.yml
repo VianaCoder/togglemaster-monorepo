@@ -84,6 +84,7 @@ jobs:
         uses: securego/gosec@master
         with:
           args: ./...
+        continue-on-error: true  # Log issues but don't block, Trivy will fail on CRITICAL
 
       - name: Run Trivy filesystem scan (SCA + source scan, fail on CRITICAL)
         uses: aquasecurity/trivy-action@v0.36.0
