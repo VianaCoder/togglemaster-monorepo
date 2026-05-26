@@ -1,0 +1,49 @@
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: keda-aws-auth
+  namespace: ns-analytics
+spec:
+  podIdentity:
+    provider: aws-eks
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: analytics-scaledobject
+  namespace: ns-analytics
+  annotations:
+    scaledobject.keda.sh/transfer-hpa-ownership: "true"
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: analytics-service
+  minReplicaCount: 0
+  maxReplicaCount: 10
+  pollingInterval: 15
+  cooldownPeriod: 60
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 90
+          policies:
+            - type: Pods
+              value: 2
+              periodSeconds: 30
+        scaleUp:
+          stabilizationWindowSeconds: 0
+          policies:
+            - type: Pods
+              value: 4
+              periodSeconds: 15
+  triggers:
+    - type: aws-sqs-queue
+      metadata:
+        queueURL: "https://sqs.<AWS_REGION>.amazonaws.com/<AWS_ACCOUNT_ID>/toggle-master-events"
+        identityOwner: "operator"
+        queueLength: "5"
+        activationQueueLength: "1"
+        awsRegion: "us-east-2"
+        scaleOnInFlight: "true"

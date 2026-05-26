@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 set -euo pipefail
 
 AUTH_URL="http://localhost:8001"
@@ -6,7 +6,7 @@ FLAG_URL="http://localhost:8002"
 TARGET_URL="http://localhost:8003"
 EVAL_URL="http://localhost:8004"
 ANALYTICS_URL="http://localhost:8005"
-MASTER_KEY="local-master-key-dev"
+MASTER_KEY="${MASTER_KEY:-CHANGE_ME_MASTER_KEY}"
 FLAG_NAME="enable-new-dashboard"
 COMPOSE_DIR="$(cd "$(dirname "$0")/.." ; pwd)"
 
@@ -30,11 +30,11 @@ assert_http() {
   fi
   local got; got=$(curl "${args[@]}")
   if [[ "$got" == "$expected" ]]; then
-    ok "$label → HTTP $got"
+    ok "$label -> HTTP $got"
     cat /tmp/tm_body.txt
     echo
   else
-    fail "$label → esperado HTTP $expected, obteve HTTP $got"
+    fail "$label -> esperado HTTP $expected, obteve HTTP $got"
     info "Body: $(cat /tmp/tm_body.txt)"
   fi
 }
@@ -53,11 +53,11 @@ assert_http_any() {
 
   local got; got=$(curl "${args[@]}")
   if [[ ",$expected_csv," == *",$got,"* ]]; then
-    ok "$label → HTTP $got"
+    ok "$label -> HTTP $got"
     cat /tmp/tm_body.txt
     echo
   else
-    fail "$label → esperado HTTP um de [$expected_csv], obteve HTTP $got"
+    fail "$label -> esperado HTTP um de [$expected_csv], obteve HTTP $got"
     info "Body: $(cat /tmp/tm_body.txt)"
   fi
 }
@@ -67,9 +67,9 @@ for svc in "$AUTH_URL" "$FLAG_URL" "$TARGET_URL" "$EVAL_URL" "$ANALYTICS_URL"; d
   code=$(curl -s -o /tmp/tm_body.txt -w "%{http_code}" "$svc/health")
   body=$(cat /tmp/tm_body.txt)
   if [[ "$code" == "200" ]]; then
-    ok "$svc/health → $code  $body"
+    ok "$svc/health -> $code  $body"
   else
-    fail "$svc/health → $code  $body"
+    fail "$svc/health -> $code  $body"
   fi
 done
 
@@ -78,7 +78,7 @@ RESPONSE=$(curl -s -X POST "$AUTH_URL/admin/keys" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $MASTER_KEY" \
   -d '{"name":"integration-test-key"}')
-info "Auth response: $RESPONSE"
+info "Auth response received"
 
 API_KEY=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['key'])" 2>/dev/null ; true)
 if [[ -n "$API_KEY" ]]; then
@@ -149,9 +149,9 @@ for uid in "${USERS[@]}"; do
   body=$(cat /tmp/tm_body.txt)
   result=$(echo "$body" | python3 -c "import sys,json; print(json.load(sys.stdin).get('result','?'))" 2>/dev/null || echo "erro")
   if [[ "$code" == "200" ]]; then
-    ok "user=$uid → result=$result"
+    ok "user=$uid -> result=$result"
   else
-    fail "user=$uid → HTTP $code  $body"
+    fail "user=$uid -> HTTP $code  $body"
   fi
 done
 
@@ -161,7 +161,7 @@ redis_key="flag_info:$FLAG_NAME"
 code=$(curl -s -o /tmp/tm_body.txt -w "%{http_code}" \
   "$EVAL_URL/evaluate?user_id=user-alpha&flag_name=$FLAG_NAME")
 body=$(cat /tmp/tm_body.txt)
-ok "Chamada 1 (prime lookup) → HTTP $code  $body"
+ok "Chamada 1 (prime lookup) -> HTTP $code  $body"
 
 cached=$(docker exec tm-redis redis-cli get "$redis_key" 2>/dev/null || echo "")
 if [[ -n "$cached" ]]; then
@@ -172,7 +172,7 @@ fi
 
 code=$(curl -s -o /tmp/tm_body.txt -w "%{http_code}" \
   "$EVAL_URL/evaluate?user_id=user-alpha&flag_name=$FLAG_NAME")
-ok "Chamada 2 (cached metadata expected) → HTTP $code  $body"
+ok "Chamada 2 (cached metadata expected) -> HTTP $code  $body"
 
 step "6/7 Analytics health"
 assert_http "Health analytics" "200" "GET" "$ANALYTICS_URL/health"

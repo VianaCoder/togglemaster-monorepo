@@ -1,8 +1,4 @@
-#!/bin/bash
-# LocalStack initialization script.
-# Mounted at /etc/localstack/init/ready.d/ — runs automatically once LocalStack
-# reports itself as ready.  Uses the bundled `awslocal` CLI (a thin wrapper
-# around `aws` that points to the local endpoint).
+﻿#!/bin/bash
 
 set -e
 

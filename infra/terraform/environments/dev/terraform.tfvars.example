@@ -1,0 +1,48 @@
+aws_region   = "us-east-1"
+project_name = "togglemaster"
+environment  = "dev"
+
+vpc_cidr = "10.30.0.0/16"
+
+availability_zones = [
+  "us-east-1a",
+  "us-east-1b"
+]
+
+enable_nat_gateway = false
+
+use_public_node_group_subnets = true
+
+create_iam_roles = true
+
+cluster_role_arn = ""
+node_role_arn    = ""
+
+kubernetes_version = "1.30"
+
+node_group_instance_types = [
+  "t3.small"
+]
+
+rds_instance_class = "db.t3.micro"
+rds_engine_version = "16.3"
+
+redis_node_type = "cache.t3.micro"
+
+sqs_queue_name      = "toggle-master-events"
+dynamodb_table_name = "ToggleMasterAnalytics"
+
+ecr_repositories = [
+  "auth-service",
+  "flag-service",
+  "targeting-service",
+  "evaluation-service",
+  "analytics-service"
+]
+
+tags = {
+  Owner        = "fiap"
+  CostCenter   = "tech"
+  ManagedBy    = "terraform"
+  Repository   = "togglemaster-monorepo"
+}
