@@ -175,4 +175,13 @@ jobs:
             exit 0
           fi
           git commit -m "chore(gitops): update ${{ env.ECR_REPOSITORY }} image to ${{ env.IMAGE_TAG }} [skip ci]"
-          git push
+          for i in 1 2 3; do
+            git pull --rebase origin main
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+            echo "Push failed due to concurrent updates. Retrying ($i/3)..."
+            sleep 2
+          done
+          echo "Failed to push GitOps update after 3 attempts"
+          exit 1
