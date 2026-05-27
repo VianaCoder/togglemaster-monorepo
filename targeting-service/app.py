@@ -68,6 +68,11 @@ def require_auth(f):
 def health():
     return jsonify({"status": "ok"})
 
+
+@app.route('/version')
+def version():
+    return jsonify({"service": "targeting-service", "version": "1.1.0"})
+
 @app.route('/rules', methods=['POST'])
 @require_auth
 def create_rule():
