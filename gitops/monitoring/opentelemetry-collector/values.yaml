@@ -1,0 +1,199 @@
+# OpenTelemetry Collector Helm values for ToggleMaster
+# Chart: open-telemetry/opentelemetry-collector
+# This collector is the central hub for all telemetry:
+#   - Receives OTLP (gRPC:4317, HTTP:4318) from microservices
+#   - Exports metrics to Prometheus via prometheus exporter
+#   - Exports logs to Loki (OTLP format, via gRPC)
+#   - Exports traces to APM backend later (Datadog, New Relic, Jaeger)
+
+mode: deployment
+replicas: 2
+
+image:
+  repository: otel/opentelemetry-collector-contrib
+  tag: "0.104.0"  # Latest release with all processors/exporters
+
+serviceAccount:
+  create: true
+
+rbac:
+  create: true
+
+# ============================================================
+# Presets: automatically add env vars, volumes, etc.
+# ============================================================
+presets:
+  kubeAPIServer:
+    enabled: true
+  kubeletMetrics:
+    enabled: true
+  hostMetrics:
+    enabled: true
+  prometheus:
+    enabled: true
+
+# ============================================================
+# Config: receivers, processors, exporters
+# ============================================================
+config:
+  # ========== RECEIVERS ==========
+  receivers:
+    # Receive OTLP telemetry (metrics, logs, traces) from microservices
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+    
+    # Collect Prometheus metrics from local kubelet, api-server, etc
+    prometheus:
+      config:
+        scrape_configs:
+          - job_name: otel-collector
+            scrape_interval: 30s
+            static_configs:
+              - targets: ["localhost:8888"]
+
+  # ========== PROCESSORS ==========
+  processors:
+    # Batch: reduces API calls by batching spans/metrics/logs
+    batch:
+      send_batch_size: 1024
+      timeout: 10s
+
+    # Memory limiter: prevents OOM by dropping data if memory exceeds threshold
+    memory_limiter:
+      check_interval: 1s
+      limit_mib: 1024
+      spike_limit_mib: 256
+
+    # Resource detection: add cloud/container/host attributes
+    resourcedetection/system:
+      detectors: [env, system]
+      timeout: 2s
+
+    # Add custom attributes to all spans (e.g., environment, region)
+    attributes:
+      actions:
+        - key: environment
+          value: production
+          action: update
+        - key: service.namespace
+          from_attribute: k8s.namespace.name
+          action: upsert
+
+  # ========== EXPORTERS ==========
+  exporters:
+    # Export metrics to Prometheus (via remote write or via scrape)
+    # We use the prometheus exporter so Prometheus can scrape OTel metrics directly
+    prometheus:
+      endpoint: "0.0.0.0:8889"
+
+    # Export logs to Loki via OTLP/gRPC
+    otlp/loki:
+      client:
+        endpoint: loki.monitoring.svc.cluster.local:4317
+        tls:
+          insecure: true
+      sending_queue:
+        enabled: true
+        num_consumers: 4
+        queue_size: 5000
+
+    # Export traces to OTLP generic endpoint (will be Datadog/New Relic/Jaeger later)
+    # For now, disabled; will enable in Req 3 when APM is configured
+    otlp/traces:
+      client:
+        # Placeholder: update this to Datadog/New Relic endpoint in Req 3
+        endpoint: localhost:4317
+        tls:
+          insecure: true
+      sending_queue:
+        enabled: true
+        num_consumers: 2
+        queue_size: 2048
+
+    # Log exporter for debugging (optional, can be removed)
+    logging:
+      loglevel: debug
+
+  # ========== SERVICE ==========
+  service:
+    pipelines:
+      # Metrics pipeline: OTLP metrics → prometheus export
+      metrics:
+        receivers: [otlp, prometheus]
+        processors: [memory_limiter, batch, resourcedetection/system, attributes]
+        exporters: [prometheus, logging]
+
+      # Logs pipeline: OTLP logs → Loki export
+      logs:
+        receivers: [otlp]
+        processors: [memory_limiter, batch, resourcedetection/system, attributes]
+        exporters: [otlp/loki, logging]
+
+      # Traces pipeline: OTLP traces → (traces exporter set up in Req 3)
+      traces:
+        receivers: [otlp]
+        processors: [memory_limiter, batch, resourcedetection/system]
+        exporters: [logging]  # Disabled until APM configured in Req 3
+
+# ============================================================
+# Ports: expose OTLP receivers and Prometheus exporter
+# ============================================================
+ports:
+  otlp-grpc:
+    enabled: true
+    containerPort: 4317
+    servicePort: 4317
+    protocol: TCP
+  otlp-http:
+    enabled: true
+    containerPort: 4318
+    servicePort: 4318
+    protocol: TCP
+  prometheus:
+    enabled: true
+    containerPort: 8889
+    servicePort: 8889
+    protocol: TCP
+  metrics:
+    enabled: true
+    containerPort: 8888
+    servicePort: 8888
+    protocol: TCP
+
+# ============================================================
+# Service type: ClusterIP for internal communication
+# ============================================================
+service:
+  type: ClusterIP
+
+# ============================================================
+# Resources
+# ============================================================
+resources:
+  limits:
+    cpu: 1000m
+    memory: 2Gi
+  requests:
+    cpu: 200m
+    memory: 512Mi
+
+# ============================================================
+# Pod disruption budget (ensure availability during upgrades)
+# ============================================================
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# ============================================================
+# Autoscaling (HPA based on CPU/memory)
+# ============================================================
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80

@@ -19,6 +19,10 @@ module "eks" {
   cluster_subnet_ids    = module.networking.private_subnet_ids
   node_group_subnet_ids = local.eks_node_subnet_ids
   node_groups           = local.node_groups
+  admin_principal_arns = [
+    "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root",
+    "arn:aws:iam::${data.aws_caller_identity.current.account_id}:user/terraform-deployer",
+  ]
   tags                  = local.common_tags
 }
 

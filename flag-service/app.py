@@ -2,65 +2,121 @@ import os
 import sys
 import psycopg2
 import requests
+import json
+import logging
 from psycopg2.extras import RealDictCursor
 from psycopg2.pool import SimpleConnectionPool
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 from functools import wraps
-import logging
+from pythonjsonlogger import jsonlogger
 
-# Configura o logging
-logging.basicConfig(level=logging.INFO)
-log = logging.getLogger(__name__)
+# OpenTelemetry imports
+from opentelemetry import trace, metrics
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.instrumentation.flask import FlaskInstrumentor
+from opentelemetry.instrumentation.requests import RequestsInstrumentor
+from opentelemetry.instrumentation.psycopg2 import Psycopg2Instrumentor
+from opentelemetry.semconv.resource import ResourceAttributes
 
 # Carrega .env para desenvolvimento local
-load_dotenv() 
+load_dotenv()
+
+# --- Logger estruturado em JSON ---
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+handler = logging.StreamHandler()
+handler.setFormatter(jsonlogger.JsonFormatter())
+logger.addHandler(handler)
+log = logger
+
+# --- OpenTelemetry Setup ---
+def init_otel():
+    """Inicializa tracer e meter providers com OTLP export"""
+    resource = Resource.create({
+        ResourceAttributes.SERVICE_NAME: "flag-service",
+        ResourceAttributes.SERVICE_VERSION: "1.0.0",
+    })
+
+    # Trace exporter
+    otlp_exporter = OTLPSpanExporter(
+        endpoint=os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "opentelemetry-collector.monitoring.svc.cluster.local:4317"),
+        insecure=True,
+    )
+    trace_provider = TracerProvider(resource=resource)
+    trace_provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
+    trace.set_tracer_provider(trace_provider)
+
+    # Metric exporter
+    metric_exporter = OTLPMetricExporter(
+        endpoint=os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "opentelemetry-collector.monitoring.svc.cluster.local:4317"),
+        insecure=True,
+    )
+    metric_provider = MeterProvider(
+        resource=resource,
+        metric_readers=[PeriodicExportingMetricReader(metric_exporter)],
+    )
+    metrics.set_meter_provider(metric_provider)
+
+    log.info("OpenTelemetry initialized")
+
+# Inicializar OTel antes de criar Flask app
+init_otel()
 
 app = Flask(__name__)
+
+# --- Auto-instrumentação ---
+FlaskInstrumentor().instrument_app(app)
+RequestsInstrumentor().instrument()
+Psycopg2Instrumentor().instrument()
 
 # --- Configuração ---
 DATABASE_URL = os.getenv("DATABASE_URL")
 AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL")
 
 if not DATABASE_URL or not AUTH_SERVICE_URL:
-    log.critical("Erro: DATABASE_URL e AUTH_SERVICE_URL devem ser definidos.")
+    log.error("DATABASE_URL and AUTH_SERVICE_URL must be defined", extra={"critical": True})
     sys.exit(1)
 
 # --- Pool de Conexão com o Banco ---
-# Inicializa o pool de conexões (Mín: 1, Máx: 5 conexões)
 try:
     pool = SimpleConnectionPool(1, 5, dsn=DATABASE_URL)
-    log.info("Pool de conexões com o PostgreSQL inicializado.")
+    log.info("PostgreSQL connection pool initialized")
 except psycopg2.OperationalError as e:
-    log.critical(f"Erro fatal ao conectar ao PostgreSQL: {e}")
+    log.error("Fatal error: failed to connect to PostgreSQL", extra={"error": str(e), "critical": True})
     sys.exit(1)
 
 # --- Middleware de Autenticação ---
 def require_auth(f):
-    """ Middleware para validar a chave de API contra o auth-service """
+    """Middleware para validar a chave de API contra o auth-service"""
     @wraps(f)
     def decorated(*args, **kwargs):
         auth_header = request.headers.get("Authorization")
         if not auth_header:
+            log.warning("Missing Authorization header")
             return jsonify({"error": "Authorization header obrigatório"}), 401
         
         try:
-            # Chama o /validate do auth-service
             validate_url = f"{AUTH_SERVICE_URL}/validate"
             response = requests.get(validate_url, headers={"Authorization": auth_header}, timeout=3)
             
             if response.status_code != 200:
-                log.warning(f"Falha na validação da chave (status: {response.status_code})")
+                log.warning("API key validation failed", extra={"status_code": response.status_code})
                 return jsonify({"error": "Chave de API inválida"}), 401
         
         except requests.exceptions.Timeout:
-            log.error("Timeout ao conectar com o auth-service")
-            return jsonify({"error": "Serviço de autenticação indisponível (timeout)"}), 504 # Gateway Timeout
+            log.error("Timeout connecting to auth-service")
+            return jsonify({"error": "Serviço de autenticação indisponível (timeout)"}), 504
         except requests.exceptions.RequestException as e:
-            log.error(f"Erro ao conectar com o auth-service: {e}")
-            return jsonify({"error": "Serviço de autenticação indisponível"}), 503 # Service Unavailable
+            log.error("Error connecting to auth-service", extra={"error": str(e)})
+            return jsonify({"error": "Serviço de autenticação indisponível"}), 503
 
-        # Se a chave for válida, continua para a rota
         return f(*args, **kwargs)
     return decorated
 
@@ -75,10 +131,15 @@ def health():
 def version():
     return jsonify({"service": "flag-service", "version": "1.1.0"})
 
+
+@app.route('/flags/version')
+def version_prefixed():
+    return jsonify({"service": "flag-service", "version": "1.1.0"})
+
 @app.route('/flags', methods=['POST'])
 @require_auth
 def create_flag():
-    """ Cria uma nova definição de feature flag """
+    """Cria uma nova definição de feature flag"""
     data = request.get_json()
     if not data or 'name' not in data:
         return jsonify({"error": "'name' é obrigatório"}), 400
@@ -99,15 +160,15 @@ def create_flag():
         )
         new_flag = cur.fetchone()
         conn.commit()
-        log.info(f"Flag '{name}' criada com sucesso.")
+        log.info("Flag created", extra={"flag_name": name})
         return jsonify(new_flag), 201
     except psycopg2.IntegrityError:
         if conn: conn.rollback()
-        log.warning(f"Tentativa de criar flag duplicada: '{name}'")
+        log.warning("Duplicate flag creation attempted", extra={"flag_name": name})
         return jsonify({"error": f"Flag '{name}' já existe"}), 409
     except Exception as e:
         if conn: conn.rollback()
-        log.error(f"Erro ao criar flag: {e}")
+        log.error("Error creating flag", extra={"flag_name": name, "error": str(e)})
         return jsonify({"error": "Erro interno do servidor", "details": str(e)}), 500
     finally:
         if cur: cur.close()
