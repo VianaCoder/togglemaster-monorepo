@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	_ "github.com/jackc/pgx/v4/stdlib"
@@ -25,9 +26,10 @@ import (
 
 // App struct (para injeção de dependência)
 type App struct {
-	DB        *sql.DB
-	MasterKey string
-	Logger    *slog.Logger
+	DB              *sql.DB
+	MasterKey       string
+	Logger          *slog.Logger
+	DemoForce500Env bool
 }
 
 func main() {
@@ -65,6 +67,8 @@ func main() {
 		os.Exit(1)
 	}
 
+	demoForce500Env := parseBoolEnv(os.Getenv("DEMO_FORCE_500_ENABLED"))
+
 	// --- Conexão com o Banco (instrumentada com otelsql) ---
 	db, err := connectDB(ctx, databaseURL, logger)
 	if err != nil {
@@ -74,9 +78,10 @@ func main() {
 	defer db.Close()
 
 	app := &App{
-		DB:        db,
-		MasterKey: masterKey,
-		Logger:    logger,
+		DB:              db,
+		MasterKey:       masterKey,
+		Logger:          logger,
+		DemoForce500Env: demoForce500Env,
 	}
 
 	// --- Rotas da API ---
@@ -85,8 +90,9 @@ func main() {
 	mux.HandleFunc("/validate", app.validateKeyHandler)
 	mux.Handle("/admin/keys", app.masterKeyAuthMiddleware(http.HandlerFunc(app.createKeyHandler)))
 
-	// Wrap mux con otelhttp para auto-instrumentar todos os handlers
-	wrappedMux := otelhttp.NewHandler(mux, "auth-service-http",
+	// Wrap com middleware de caos controlado e OTel auto-instrumentation
+	chaosWrappedMux := app.demoForce500Middleware(mux)
+	wrappedMux := otelhttp.NewHandler(chaosWrappedMux, "auth-service-http",
 		otelhttp.WithMeterProvider(otel.GetMeterProvider()),
 		otelhttp.WithTracerProvider(otel.GetTracerProvider()),
 	)
@@ -197,17 +203,13 @@ func (a *App) healthHandler(w http.ResponseWriter, r *http.Request) {
 // validateKeyHandler verifica se uma chave de API (enviada via Header) é válida
 func (a *App) validateKeyHandler(w http.ResponseWriter, r *http.Request) {
 	authHeader := r.Header.Get("Authorization")
-	if authHeader == "" {
+	if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") || len(authHeader) <= len("Bearer ") {
 		a.Logger.Warn("Authorization header not found", slog.String("path", r.RequestURI))
 		http.Error(w, "Authorization header não encontrado", http.StatusUnauthorized)
 		return
 	}
 
-	keyString := authHeader[7:] // Remove "Bearer "
-	if keyString == "" {
-		http.Error(w, "Authorization header não encontrado", http.StatusUnauthorized)
-		return
-	}
+	keyString := authHeader[len("Bearer "):] // Remove "Bearer "
 
 	// Calcula o hash da chave recebida
 	keyHash := hashAPIKey(keyString)
@@ -281,16 +283,50 @@ func (a *App) createKeyHandler(w http.ResponseWriter, r *http.Request) {
 func (a *App) masterKeyAuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" {
+		if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") || len(authHeader) <= len("Bearer ") {
 			a.Logger.Warn("Master key auth failed: missing header")
 			http.Error(w, "Acesso não autorizado", http.StatusForbidden)
 			return
 		}
 
-		keyString := authHeader[7:] // Remove "Bearer "
+		keyString := authHeader[len("Bearer "):] // Remove "Bearer "
 		if keyString != a.MasterKey {
 			a.Logger.Warn("Master key auth failed: invalid key")
 			http.Error(w, "Acesso não autorizado", http.StatusForbidden)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+func parseBoolEnv(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on", "enabled":
+		return true
+	default:
+		return false
+	}
+}
+
+func (a *App) shouldForce500(r *http.Request) bool {
+	if !a.DemoForce500Env {
+		return false
+	}
+
+	// Allows controlled incident injection via query or header.
+	return parseBoolEnv(r.URL.Query().Get("force_500")) ||
+		parseBoolEnv(r.Header.Get("X-Demo-Force-500"))
+}
+
+func (a *App) demoForce500Middleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if a.shouldForce500(r) {
+			a.Logger.Warn("Demo 500 flag triggered",
+				slog.String("path", r.URL.Path),
+				slog.String("method", r.Method),
+			)
+			http.Error(w, "Erro interno (demo flag)", http.StatusInternalServerError)
 			return
 		}
 

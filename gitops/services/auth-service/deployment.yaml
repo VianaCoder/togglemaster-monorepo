@@ -5,6 +5,7 @@ metadata:
   namespace: ns-auth
 data:
   PORT: "8001"
+  DEMO_FORCE_500_ENABLED: "false"
 ---
 apiVersion: v1
 kind: Secret
@@ -31,6 +32,27 @@ spec:
       labels:
         app: auth-service
     spec:
+      initContainers:
+        - name: auth-db-migration
+          image: postgres:16-alpine
+          command:
+            - sh
+            - -ec
+            - |
+              psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+              CREATE TABLE IF NOT EXISTS api_keys (
+                  id SERIAL PRIMARY KEY,
+                  name VARCHAR(100) NOT NULL,
+                  key_hash VARCHAR(64) NOT NULL UNIQUE,
+                  is_active BOOLEAN DEFAULT true,
+                  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+              );
+              SQL
+          envFrom:
+            - configMapRef:
+                name: auth-config
+            - secretRef:
+                name: auth-secret
       containers:
         - name: auth-service
           image: 127214161915.dkr.ecr.us-east-1.amazonaws.com/auth-service:v1.0.0-709fa7a

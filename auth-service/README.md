@@ -29,6 +29,9 @@ Este é o serviço de autenticação do projeto ToggleMaster. Ele é responsáve
     
     # Chave mestra para criar novas chaves de API
     MASTER_KEY="admin-secreto-123"
+
+    # Flag de caos para demo de incidentes 5xx (opcional)
+    DEMO_FORCE_500_ENABLED="false"
     ```
 
 4.  **Instale as Dependências:**
@@ -89,3 +92,22 @@ curl http://localhost:8001/validate \
 ```
 
 Saída esperada: `Chave de API inválida ou inativa`
+
+## Chaos Flag (Demo 500)
+
+Para simular incidentes 500 de forma controlada no `auth-service`, existe a flag de ambiente `DEMO_FORCE_500_ENABLED`.
+
+1. Quando `DEMO_FORCE_500_ENABLED=true`, o serviço passa a retornar `500` para requisições que tenham:
+    - query param `force_500=true`, ou
+    - header `X-Demo-Force-500: true`
+2. Quando `DEMO_FORCE_500_ENABLED=false`, esse comportamento fica desativado.
+
+Exemplos:
+
+```bash
+curl "http://localhost:8001/health?force_500=true"
+```
+
+```bash
+curl -H "X-Demo-Force-500: true" http://localhost:8001/health
+```
