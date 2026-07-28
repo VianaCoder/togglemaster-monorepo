@@ -34,10 +34,10 @@ config:
             separator: /
             replacement: /var/log/pods/*$1/*.log
             target_label: __path__
-          # Drop Promtail's own logs to avoid feedback loops
-          - source_labels: [namespace]
-            regex: monitoring
-            action: keep
+          # Drop only Promtail's own container logs to avoid feedback loops
+          - source_labels: [container]
+            regex: promtail
+            action: drop
 
 # Tolerate all taints so Promtail runs on every node (including tainted ones)
 tolerations:
