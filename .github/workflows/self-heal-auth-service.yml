@@ -132,13 +132,19 @@ jobs:
           kubectl auth can-i get deployments -n "$NAMESPACE"
           kubectl auth can-i patch deployments -n "$NAMESPACE"
 
-      - name: Restart deployment
+      - name: Recover deployment replicas or restart
         env:
           NAMESPACE: ${{ steps.target.outputs.namespace }}
           DEPLOYMENT: ${{ steps.target.outputs.deployment }}
         run: |
-          echo "Triggering rollout restart for $DEPLOYMENT in namespace $NAMESPACE"
-          kubectl -n "$NAMESPACE" rollout restart deployment/"$DEPLOYMENT"
+          REPLICAS="$(kubectl -n "$NAMESPACE" get deployment "$DEPLOYMENT" -o jsonpath='{.spec.replicas}')"
+          if [ "$REPLICAS" = "0" ]; then
+            echo "Deployment is scaled to 0. Scaling $DEPLOYMENT in namespace $NAMESPACE to 1 replica"
+            kubectl -n "$NAMESPACE" scale deployment/"$DEPLOYMENT" --replicas=1
+          else
+            echo "Triggering rollout restart for $DEPLOYMENT in namespace $NAMESPACE"
+            kubectl -n "$NAMESPACE" rollout restart deployment/"$DEPLOYMENT"
+          fi
 
       - name: Wait for rollout
         env:
