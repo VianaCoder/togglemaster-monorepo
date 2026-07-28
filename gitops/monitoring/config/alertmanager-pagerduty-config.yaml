@@ -1,0 +1,92 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: alertmanager-pagerduty
+  namespace: monitoring
+type: Opaque
+stringData:
+  # Obtenha a PagerDuty Integration Key em:
+  # PagerDuty → Services → seu serviço → Integrations → Events API v2 → Integration Key
+  integration-key: "YOUR_PAGERDUTY_INTEGRATION_KEY_HERE"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-config
+  namespace: monitoring
+data:
+  config.yaml: |
+    global:
+      resolve_timeout: 5m
+      # URL base do Alertmanager para incluir nos links
+      external_url: 'https://alertmanager.gvianalourenco.xyz'
+
+    # Define os receptores de alertas
+    receivers:
+      - name: 'null'
+      
+      - name: 'pagerduty'
+        pagerduty_configs:
+          - service_key_file: /etc/alertmanager/secrets/pagerduty/integration-key
+            severity_prefix: yes
+            # Agrupa alertas no PagerDuty por labels
+            grouping_labels:
+              - severity
+              - namespace
+              - service
+            # Adiciona detalhes do alerta
+            client: 'Prometheus'
+            client_url: '{{ .GroupLabels.external_url }}'
+      
+      # Fallback para Discord (opcional)
+      - name: 'discord'
+        webhook_configs:
+          - url_file: /etc/alertmanager/secrets/discord/webhook-url
+            send_resolved: true
+
+    # Configuração de roteamento
+    route:
+      receiver: 'pagerduty'
+      group_by:
+        - 'alertname'
+        - 'severity'
+        - 'namespace'
+        - 'service'
+        - 'job'
+      group_wait: 10s       # Aguarda 10s depois do primeiro alerta chegar
+      group_interval: 10s   # Aguarda 10s caso haja novos alertas
+      repeat_interval: 12h  # Repete a cada 12 horas se o alerta persistir
+
+      # Subrotas por severidade
+      routes:
+        - match:
+            severity: 'critical'
+          receiver: 'pagerduty'
+          continue: true    # Envia TAMBÉM aos receptores pai
+          group_wait: 0s    # SEM aguardar, envia imediatamente
+          repeat_interval: 1h
+
+        - match:
+            severity: 'warning'
+          receiver: 'discord'
+          group_wait: 30s
+
+    # Inibição de alertas (evita spam)
+    inhibit_rules:
+      # Se há um alerta crítico, inibe os warnings do mesmo job
+      - source_match:
+          severity: 'critical'
+        target_match:
+          severity: 'warning'
+        equal:
+          - 'namespace'
+          - 'job'
+
+      # Inibe todos os alertas se o cluster está down
+      - source_match:
+          alertname: 'KubernetesNodeNotReady'
+        target_match_re:
+          alertname: '.*'
+        equal:
+          - 'node'

@@ -1,0 +1,72 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: togglemaster-http-500-alerts
+  namespace: monitoring
+  labels:
+    # kube-prometheus-stack discovers PrometheusRules with this label
+    release: kube-prometheus-stack
+    app: kube-prometheus-stack
+spec:
+  groups:
+    - name: togglemaster.http500
+      interval: 30s
+      rules:
+        # -------------------------------------------------------
+        # Alert: qualquer serviço retornando erros 5xx via ingress-nginx
+        # -------------------------------------------------------
+        - alert: HighHTTP500RateIngress
+          expr: |
+            sum by (ingress, service, namespace) (
+              rate(nginx_ingress_controller_requests{status=~"5.."}[5m])
+            ) > 0.05
+          for: 2m
+          labels:
+            severity: critical
+            team: platform
+          annotations:
+            summary: "Erros HTTP 5xx detectados em {{ $labels.service }}"
+            description: >
+              O serviço *{{ $labels.service }}* (namespace: {{ $labels.namespace }},
+              ingress: {{ $labels.ingress }}) está retornando erros 5xx a uma taxa de
+              {{ $value | humanize }} req/s nos últimos 5 minutos.
+            runbook_url: "https://github.com/VianaCoder/togglemaster-monorepo/blob/main/README.md"
+
+        # -------------------------------------------------------
+        # Alert: erro 500 no nível do pod via kube_pod_* (fallback
+        # para serviços sem ingress usando métricas de latência/requests
+        # expostas pelo próprio serviço)
+        # -------------------------------------------------------
+        - alert: HighHTTP500RateService
+          expr: |
+            sum by (job, namespace) (
+              rate(http_requests_total{status=~"5.."}[5m])
+            ) > 0.05
+          for: 2m
+          labels:
+            severity: critical
+            team: platform
+          annotations:
+            summary: "Erros HTTP 5xx no serviço {{ $labels.job }}"
+            description: >
+              O serviço *{{ $labels.job }}* (namespace: {{ $labels.namespace }})
+              está retornando erros 5xx a uma taxa de {{ $value | humanize }} req/s.
+            runbook_url: "https://github.com/VianaCoder/togglemaster-monorepo/blob/main/README.md"
+
+        # -------------------------------------------------------
+        # Alert: warning antecipado (threshold mais baixo)
+        # -------------------------------------------------------
+        - alert: HTTP500RateWarning
+          expr: |
+            sum by (ingress, service, namespace) (
+              rate(nginx_ingress_controller_requests{status=~"5.."}[5m])
+            ) > 0.01
+          for: 5m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: "Início de erros 5xx em {{ $labels.service }}"
+            description: >
+              O serviço *{{ $labels.service }}* está apresentando erros 5xx
+              ({{ $value | humanize }} req/s). Verifique antes de escalar para crítico.
