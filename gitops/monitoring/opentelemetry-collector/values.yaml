@@ -45,6 +45,28 @@ config:
           endpoint: ${env:MY_POD_IP}:4317
         http:
           endpoint: ${env:MY_POD_IP}:4318
+
+    # Host infrastructure metrics required for Datadog infra visibility.
+    hostmetrics:
+      collection_interval: 10s
+      scrapers:
+        paging:
+          metrics:
+            system.paging.utilization:
+              enabled: true
+        cpu:
+          metrics:
+            system.cpu.utilization:
+              enabled: true
+        disk: {}
+        filesystem:
+          metrics:
+            system.filesystem.utilization:
+              enabled: true
+        load: {}
+        memory: {}
+        network: {}
+        processes: {}
     
     # Collect Prometheus metrics from local kubelet, api-server, etc
     prometheus:
@@ -59,7 +81,8 @@ config:
   processors:
     # Batch: reduces API calls by batching spans/metrics/logs
     batch:
-      send_batch_size: 1024
+      send_batch_max_size: 100
+      send_batch_size: 10
       timeout: 10s
 
     # Memory limiter: prevents OOM by dropping data if memory exceeds threshold
@@ -100,9 +123,8 @@ config:
         num_consumers: 4
         queue_size: 5000
 
-    # Export traces to Datadog via OpenTelemetry Datadog exporter.
-    # Requires env vars DD_API_KEY and DD_SITE from Kubernetes secret datadog-otlp.
-    datadog:
+    # Datadog exporter for traces, metrics, and logs.
+    datadog/exporter:
       api:
         key: ${env:DD_API_KEY}
         site: ${env:DD_SITE}
@@ -111,6 +133,9 @@ config:
         resource_attributes_as_tags: true
       traces:
         span_name_as_resource_name: true
+
+    # APM stats connector required by Datadog collector topology.
+    datadog/connector: {}
 
     # Debug exporter for troubleshooting during setup.
     debug: {}
@@ -123,21 +148,21 @@ config:
     pipelines:
       # Metrics pipeline: OTLP metrics → prometheus export
       metrics:
-        receivers: [otlp, prometheus]
+        receivers: [datadog/connector, otlp, hostmetrics, prometheus]
         processors: [memory_limiter, batch, resourcedetection/system, attributes]
-        exporters: [prometheus, debug]
+        exporters: [prometheus, datadog/exporter]
 
       # Logs pipeline: OTLP logs → Loki export
       logs:
         receivers: [otlp]
         processors: [memory_limiter, batch, resourcedetection/system, attributes]
-        exporters: [otlp/loki, debug]
+        exporters: [otlp/loki, datadog/exporter]
 
       # Traces pipeline: OTLP traces → Datadog APM
       traces:
         receivers: [otlp]
         processors: [memory_limiter, batch, resourcedetection/system]
-        exporters: [datadog, debug]
+        exporters: [datadog/connector, datadog/exporter]
 
 # Datadog credentials are injected as env vars from a Kubernetes secret.
 # Secret format expected in namespace monitoring:
