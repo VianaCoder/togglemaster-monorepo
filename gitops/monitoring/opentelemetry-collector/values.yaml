@@ -134,11 +134,15 @@ config:
       traces:
         span_name_as_resource_name: true
 
-    # APM stats connector required by Datadog collector topology.
-    datadog/connector: {}
-
     # Debug exporter for troubleshooting during setup.
     debug: {}
+
+  connectors:
+    # Datadog connector computes APM stats from traces and forwards them to a traces pipeline.
+    datadog/connector:
+      traces:
+        span_name_as_resource_name: true
+        compute_stats_by_span_kind: true
 
   # ========== SERVICE ==========
   service:
@@ -158,11 +162,17 @@ config:
         processors: [memory_limiter, batch, resourcedetection/system, attributes]
         exporters: [otlp/loki, datadog/exporter]
 
-      # Traces pipeline: OTLP traces → Datadog APM
+      # Traces pipeline: OTLP traces → Datadog connector, then Datadog exporter.
       traces:
         receivers: [otlp]
         processors: [memory_limiter, batch, resourcedetection/system]
-        exporters: [datadog/connector, datadog/exporter]
+        exporters: [datadog/connector]
+
+      # Datadog trace stats / forwarding pipeline.
+      traces/datadog:
+        receivers: [datadog/connector]
+        processors: [batch]
+        exporters: [datadog/exporter]
 
 # Datadog credentials are injected as env vars from a Kubernetes secret.
 # Secret format expected in namespace monitoring:
