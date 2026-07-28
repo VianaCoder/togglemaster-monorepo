@@ -53,7 +53,7 @@ locals {
 
   node_groups = {
     default = {
-      desired_size   = 1
+      desired_size   = 2
       max_size       = 2
       min_size       = 1
       instance_types = var.node_group_instance_types

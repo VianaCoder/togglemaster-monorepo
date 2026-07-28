@@ -21,7 +21,7 @@ from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExport
 from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.instrumentation.flask import FlaskInstrumentor
-from opentelemetry.instrumentation.boto3 import Boto3Instrumentor
+from opentelemetry.instrumentation.botocore import BotocoreInstrumentor
 from opentelemetry.semconv.resource import ResourceAttributes
 
 # Carrega .env para desenvolvimento local
@@ -72,7 +72,7 @@ app = Flask(__name__)
 
 # --- Auto-instrumentação ---
 FlaskInstrumentor().instrument_app(app)
-Boto3Instrumentor().instrument()
+BotocoreInstrumentor().instrument()
 
 # --- Configuração ---
 AWS_REGION = os.getenv("AWS_REGION")

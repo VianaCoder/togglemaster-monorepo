@@ -10,9 +10,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/jackc/pgx/v4/stdlib"
+	_ "github.com/jackc/pgx/v4/stdlib"
 	"github.com/joho/godotenv"
-	"go.opentelemetry.io/contrib/instrumentation/database/sql/otelsql"
+	"github.com/XSAM/otelsql"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
@@ -20,7 +20,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	"go.opentelemetry.io/otel/sdk/trace"
-	"go.opentelemetry.io/otel/semconv/v1.27.0/semconv"
+	"go.opentelemetry.io/otel/semconv/v1.24.0"
 )
 
 // App struct (para injeção de dependência)
@@ -101,7 +101,7 @@ func main() {
 // connectDB inicializa e testa a conexão com o PostgreSQL (com otelsql)
 func connectDB(ctx context.Context, databaseURL string, logger *slog.Logger) (*sql.DB, error) {
 	// Registra o driver pgx com auto-instrumentation via otelsql
-	driverName, err := otelsql.Register("pgx", stdlib.GetDefaultDriver(),
+	driverName, err := otelsql.Register("pgx",
 		otelsql.WithAttributes(
 			semconv.DBSystemPostgreSQL,
 		),
@@ -233,7 +233,7 @@ func (a *App) createKeyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req struct{ Name string }{}
+	var req struct{ Name string }
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		a.Logger.Warn("Invalid request body", slog.Any("error", err))
 		http.Error(w, "Corpo da requisição inválido", http.StatusBadRequest)

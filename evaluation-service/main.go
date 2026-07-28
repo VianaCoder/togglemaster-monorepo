@@ -21,7 +21,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	"go.opentelemetry.io/otel/sdk/trace"
-	"go.opentelemetry.io/otel/semconv/v1.27.0/semconv"
+	"go.opentelemetry.io/otel/semconv/v1.24.0"
 )
 
 // Contexto global para o Redis

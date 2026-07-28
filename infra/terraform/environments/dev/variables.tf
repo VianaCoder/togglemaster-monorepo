@@ -77,7 +77,7 @@ variable "kubernetes_version" {
 variable "node_group_instance_types" {
   description = "Instance types used in default node group"
   type        = list(string)
-  default     = ["t3.small"]
+  default     = ["t3.medium"]
 }
 
 variable "rds_instance_class" {
