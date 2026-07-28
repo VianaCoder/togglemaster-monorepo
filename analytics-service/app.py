@@ -9,13 +9,70 @@ import boto3
 from botocore.exceptions import NoCredentialsError, ClientError
 from flask import Flask, jsonify
 from dotenv import load_dotenv
+from pythonjsonlogger import jsonlogger
 
-# Configura o logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-log = logging.getLogger(__name__)
+# OpenTelemetry imports
+from opentelemetry import trace, metrics
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.instrumentation.flask import FlaskInstrumentor
+from opentelemetry.instrumentation.boto3 import Boto3Instrumentor
+from opentelemetry.semconv.resource import ResourceAttributes
 
 # Carrega .env para desenvolvimento local
 load_dotenv()
+
+# --- Logger estruturado em JSON ---
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+handler = logging.StreamHandler()
+handler.setFormatter(jsonlogger.JsonFormatter())
+logger.addHandler(handler)
+log = logger
+
+# --- OpenTelemetry Setup ---
+def init_otel():
+    """Inicializa tracer e meter providers com OTLP export"""
+    resource = Resource.create({
+        ResourceAttributes.SERVICE_NAME: "analytics-service",
+        ResourceAttributes.SERVICE_VERSION: "1.0.0",
+    })
+
+    # Trace exporter
+    otlp_exporter = OTLPSpanExporter(
+        endpoint=os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "opentelemetry-collector.monitoring.svc.cluster.local:4317"),
+        insecure=True,
+    )
+    trace_provider = TracerProvider(resource=resource)
+    trace_provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
+    trace.set_tracer_provider(trace_provider)
+
+    # Metric exporter
+    metric_exporter = OTLPMetricExporter(
+        endpoint=os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "opentelemetry-collector.monitoring.svc.cluster.local:4317"),
+        insecure=True,
+    )
+    metric_provider = MeterProvider(
+        resource=resource,
+        metric_readers=[PeriodicExportingMetricReader(metric_exporter)],
+    )
+    metrics.set_meter_provider(metric_provider)
+
+    log.info("OpenTelemetry initialized")
+
+# Inicializar OTel antes de criar Flask app
+init_otel()
+
+app = Flask(__name__)
+
+# --- Auto-instrumentação ---
+FlaskInstrumentor().instrument_app(app)
+Boto3Instrumentor().instrument()
 
 # --- Configuração ---
 AWS_REGION = os.getenv("AWS_REGION")
@@ -23,30 +80,29 @@ SQS_QUEUE_URL = os.getenv("AWS_SQS_URL")
 DYNAMODB_TABLE_NAME = os.getenv("AWS_DYNAMODB_TABLE")
 
 if not all([AWS_REGION, SQS_QUEUE_URL, DYNAMODB_TABLE_NAME]):
-    log.critical("Erro: AWS_REGION, AWS_SQS_URL, e AWS_DYNAMODB_TABLE devem ser definidos.")
+    log.error("AWS_REGION, AWS_SQS_URL, and AWS_DYNAMODB_TABLE must be defined", extra={"critical": True})
     sys.exit(1)
 
 # --- Clientes Boto3 ---
-# Criamos a sessão uma vez
 try:
     session = boto3.Session(region_name=AWS_REGION)
     sqs_client = session.client("sqs")
     dynamodb_client = session.client("dynamodb")
-    log.info(f"Clientes Boto3 inicializados na região {AWS_REGION}")
+    log.info("Boto3 clients initialized", extra={"region": AWS_REGION})
 except NoCredentialsError:
-    log.critical("Credenciais da AWS não encontradas. Verifique seu ambiente.")
+    log.error("AWS credentials not found. Check your environment.", extra={"critical": True})
     sys.exit(1)
 except Exception as e:
-    log.critical(f"Erro ao inicializar o Boto3: {e}")
+    log.error("Error initializing Boto3", extra={"error": str(e), "critical": True})
     sys.exit(1)
 
 
 # --- SQS Worker ---
 
 def process_message(message):
-    """ Processa uma única mensagem SQS e a insere no DynamoDB """
+    """Processa uma única mensagem SQS e a insere no DynamoDB"""
     try:
-        log.info(f"Processando mensagem ID: {message['MessageId']}")
+        log.info("Processing SQS message", extra={"message_id": message['MessageId']})
         body = json.loads(message['Body'])
         
         # Gera um ID único para o item no DynamoDB
@@ -67,7 +123,7 @@ def process_message(message):
             Item=item
         )
         
-        log.info(f"Evento {event_id} (Flag: {body['flag_name']}) salvo no DynamoDB.")
+        log.info("Event saved to DynamoDB", extra={"event_id": event_id, "flag_name": body['flag_name']})
         
         # Se tudo deu certo, deleta a mensagem da fila
         sqs_client.delete_message(
@@ -76,24 +132,21 @@ def process_message(message):
         )
         
     except json.JSONDecodeError:
-        log.error(f"Erro ao decodificar JSON da mensagem ID: {message['MessageId']}")
-        # Não deleta a mensagem, pode ser uma "poison pill"
+        log.error("Failed to decode JSON from SQS message", extra={"message_id": message['MessageId']})
     except ClientError as e:
-        log.error(f"Erro do Boto3 (DynamoDB ou SQS) ao processar {message['MessageId']}: {e}")
-        # Não deleta a mensagem, tenta novamente
+        log.error("Boto3 error processing message", extra={"message_id": message['MessageId'], "error": str(e)})
     except Exception as e:
-        log.error(f"Erro inesperado ao processar {message['MessageId']}: {e}")
-        # Não deleta a mensagem, tenta novamente
+        log.error("Unexpected error processing message", extra={"message_id": message['MessageId'], "error": str(e)})
 
 def sqs_worker_loop():
-    """ Loop principal do worker que ouve a fila SQS """
-    log.info("Iniciando o worker SQS...")
+    """Loop principal do worker que ouve a fila SQS"""
+    log.info("Starting SQS worker")
     while True:
         try:
             # Long-polling: espera até 20s por mensagens
             response = sqs_client.receive_message(
                 QueueUrl=SQS_QUEUE_URL,
-                MaxNumberOfMessages=10,  # Processa em lotes de até 10
+                MaxNumberOfMessages=10,
                 WaitTimeSeconds=20
             )
             

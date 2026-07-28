@@ -10,6 +10,12 @@ RUN pip install --no-cache-dir -r requirements.txt && \
 
 COPY . .
 
+# OpenTelemetry environment variables
+ENV OTEL_EXPORTER_OTLP_ENDPOINT="opentelemetry-collector.monitoring.svc.cluster.local:4317"
+ENV OTEL_EXPORTER_OTLP_INSECURE="true"
+ENV OTEL_SERVICE_NAME="analytics-service"
+ENV OTEL_LOG_LEVEL="info"
+
 EXPOSE 8005
 
 # Single worker: the app spawns a background SQS-polling thread at startup;

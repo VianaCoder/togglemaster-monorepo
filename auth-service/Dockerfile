@@ -27,6 +27,12 @@ WORKDIR /app
 
 COPY --from=builder /app/auth-service .
 
+# OpenTelemetry environment variables (can be overridden at pod runtime)
+ENV OTEL_EXPORTER_OTLP_ENDPOINT="opentelemetry-collector.monitoring.svc.cluster.local:4317"
+ENV OTEL_EXPORTER_OTLP_INSECURE="true"
+ENV OTEL_SERVICE_NAME="auth-service"
+ENV OTEL_LOG_LEVEL="info"
+
 EXPOSE 8001
 
 CMD ["./auth-service"]
