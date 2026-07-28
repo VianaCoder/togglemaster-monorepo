@@ -20,14 +20,6 @@ prometheus:
     podMonitorNamespaceSelector: {}
     ruleNamespaceSelector: {}
 
-    storageSpec:
-      volumeClaimTemplate:
-        spec:
-          accessModes: ["ReadWriteOnce"]
-          resources:
-            requests:
-              storage: 20Gi
-
     resources:
       requests:
         cpu: "200m"
@@ -41,13 +33,6 @@ prometheus:
 # ============================================================
 alertmanager:
   alertmanagerSpec:
-    storage:
-      volumeClaimTemplate:
-        spec:
-          accessModes: ["ReadWriteOnce"]
-          resources:
-            requests:
-              storage: 2Gi
     resources:
       requests:
         cpu: "50m"
