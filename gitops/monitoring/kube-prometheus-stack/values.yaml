@@ -19,6 +19,7 @@ prometheus:
     serviceMonitorNamespaceSelector: {}
     podMonitorNamespaceSelector: {}
     ruleNamespaceSelector: {}
+    storageSpec: {}
 
     resources:
       requests:
@@ -33,6 +34,7 @@ prometheus:
 # ============================================================
 alertmanager:
   alertmanagerSpec:
+    storage: {}
     resources:
       requests:
         cpu: "50m"
