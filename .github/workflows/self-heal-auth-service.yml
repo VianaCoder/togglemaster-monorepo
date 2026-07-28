@@ -1,0 +1,136 @@
+name: Self-Heal Auth Service
+
+on:
+  repository_dispatch:
+    types:
+      - self-heal-auth-service
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Reason for manual self-heal"
+        required: false
+        default: "manual trigger"
+      namespace:
+        description: "Kubernetes namespace"
+        required: false
+        default: "ns-auth"
+      deployment:
+        description: "Kubernetes deployment name"
+        required: false
+        default: "auth-service"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: self-heal-auth-service
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME || 'togglemaster-dev-eks' }}
+  DEFAULT_NAMESPACE: ns-auth
+  DEFAULT_DEPLOYMENT: auth-service
+
+jobs:
+  restart-auth-service:
+    name: Restart auth-service on alert
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate dispatch secret
+        if: github.event_name == 'repository_dispatch'
+        env:
+          EXPECTED_SECRET: ${{ secrets.SELF_HEAL_WEBHOOK_SECRET }}
+          PROVIDED_SECRET: ${{ github.event.client_payload.secret }}
+        run: |
+          if [ -z "$EXPECTED_SECRET" ]; then
+            echo "Missing required secret: SELF_HEAL_WEBHOOK_SECRET"
+            exit 1
+          fi
+          if [ "$EXPECTED_SECRET" != "$PROVIDED_SECRET" ]; then
+            echo "Invalid webhook secret"
+            exit 1
+          fi
+
+      - name: Skip resolved notifications
+        if: github.event_name == 'repository_dispatch'
+        env:
+          ALERT_STATUS: ${{ github.event.client_payload.status }}
+        run: |
+          if [ "$ALERT_STATUS" = "resolved" ]; then
+            echo "Resolved alert received. No remediation needed."
+            exit 0
+          fi
+
+      - name: Resolve target namespace/deployment
+        id: target
+        env:
+          DISPATCH_NAMESPACE: ${{ github.event.client_payload.namespace }}
+          DISPATCH_DEPLOYMENT: ${{ github.event.client_payload.deployment }}
+          INPUT_NAMESPACE: ${{ github.event.inputs.namespace }}
+          INPUT_DEPLOYMENT: ${{ github.event.inputs.deployment }}
+        run: |
+          NAMESPACE="$DEFAULT_NAMESPACE"
+          DEPLOYMENT="$DEFAULT_DEPLOYMENT"
+
+          if [ -n "$INPUT_NAMESPACE" ]; then
+            NAMESPACE="$INPUT_NAMESPACE"
+          fi
+          if [ -n "$INPUT_DEPLOYMENT" ]; then
+            DEPLOYMENT="$INPUT_DEPLOYMENT"
+          fi
+          if [ -n "$DISPATCH_NAMESPACE" ]; then
+            NAMESPACE="$DISPATCH_NAMESPACE"
+          fi
+          if [ -n "$DISPATCH_DEPLOYMENT" ]; then
+            DEPLOYMENT="$DISPATCH_DEPLOYMENT"
+          fi
+
+          echo "namespace=$NAMESPACE" >> "$GITHUB_OUTPUT"
+          echo "deployment=$DEPLOYMENT" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Configure kubectl for EKS
+        run: |
+          aws eks update-kubeconfig --name "$EKS_CLUSTER_NAME" --region "$AWS_REGION"
+          kubectl config current-context
+
+      - name: Restart deployment
+        env:
+          NAMESPACE: ${{ steps.target.outputs.namespace }}
+          DEPLOYMENT: ${{ steps.target.outputs.deployment }}
+        run: |
+          echo "Triggering rollout restart for $DEPLOYMENT in namespace $NAMESPACE"
+          kubectl -n "$NAMESPACE" rollout restart deployment/"$DEPLOYMENT"
+
+      - name: Wait for rollout
+        env:
+          NAMESPACE: ${{ steps.target.outputs.namespace }}
+          DEPLOYMENT: ${{ steps.target.outputs.deployment }}
+        run: |
+          kubectl -n "$NAMESPACE" rollout status deployment/"$DEPLOYMENT" --timeout=300s
+
+      - name: Emit execution summary
+        env:
+          NAMESPACE: ${{ steps.target.outputs.namespace }}
+          DEPLOYMENT: ${{ steps.target.outputs.deployment }}
+          EVENT_NAME: ${{ github.event_name }}
+          REASON: ${{ github.event.client_payload.reason || github.event.inputs.reason || 'n/a' }}
+        run: |
+          {
+            echo "## Self-healing executed"
+            echo "- Event: $EVENT_NAME"
+            echo "- Namespace: $NAMESPACE"
+            echo "- Deployment: $DEPLOYMENT"
+            echo "- Reason: $REASON"
+          } >> "$GITHUB_STEP_SUMMARY"
