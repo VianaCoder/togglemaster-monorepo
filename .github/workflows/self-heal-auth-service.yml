@@ -93,7 +93,16 @@ jobs:
           echo "namespace=$NAMESPACE" >> "$GITHUB_OUTPUT"
           echo "deployment=$DEPLOYMENT" >> "$GITHUB_OUTPUT"
 
+      - name: Configure kubectl from kubeconfig secret
+        if: secrets.KUBE_CONFIG_B64 != ''
+        env:
+          KUBE_CONFIG_B64: ${{ secrets.KUBE_CONFIG_B64 }}
+        run: |
+          echo "$KUBE_CONFIG_B64" | base64 -d > "$RUNNER_TEMP/kubeconfig"
+          echo "KUBECONFIG=$RUNNER_TEMP/kubeconfig" >> "$GITHUB_ENV"
+
       - name: Configure AWS credentials
+        if: secrets.KUBE_CONFIG_B64 == ''
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -101,9 +110,17 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Configure kubectl for EKS
+        if: secrets.KUBE_CONFIG_B64 == ''
         run: |
           aws eks update-kubeconfig --name "$EKS_CLUSTER_NAME" --region "$AWS_REGION"
           kubectl config current-context
+
+      - name: Validate kubectl authentication
+        env:
+          NAMESPACE: ${{ steps.target.outputs.namespace }}
+        run: |
+          kubectl auth can-i get deployments -n "$NAMESPACE"
+          kubectl auth can-i patch deployments -n "$NAMESPACE"
 
       - name: Restart deployment
         env:
