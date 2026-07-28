@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from pythonjsonlogger import jsonlogger
 
 # OpenTelemetry imports
-from opentelemetry import trace, metrics
+from opentelemetry import trace, metrics, context
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.metrics import MeterProvider
@@ -68,6 +68,9 @@ def init_otel():
 # Inicializar OTel antes de criar Flask app
 init_otel()
 
+# Tracer para criar spans explícitos no worker
+tracer = trace.get_tracer("analytics-service")
+
 app = Flask(__name__)
 
 # --- Auto-instrumentação ---
@@ -101,42 +104,61 @@ except Exception as e:
 
 def process_message(message):
     """Processa uma única mensagem SQS e a insere no DynamoDB"""
-    try:
-        log.info("Processing SQS message", extra={"message_id": message['MessageId']})
-        body = json.loads(message['Body'])
-        
-        # Gera um ID único para o item no DynamoDB
-        event_id = str(uuid.uuid4())
-        
-        # Constrói o item no formato do DynamoDB
-        item = {
-            'event_id': {'S': event_id},
-            'user_id': {'S': body['user_id']},
-            'flag_name': {'S': body['flag_name']},
-            'result': {'BOOL': body['result']},
-            'timestamp': {'S': body['timestamp']}
+    with tracer.start_as_current_span(
+        "analytics.process_sqs_message",
+        attributes={
+            "messaging.system": "aws_sqs",
+            "messaging.message_id": message['MessageId'],
+            "messaging.operation": "process",
         }
-        
-        # Insere no DynamoDB
-        dynamodb_client.put_item(
-            TableName=DYNAMODB_TABLE_NAME,
-            Item=item
-        )
-        
-        log.info("Event saved to DynamoDB", extra={"event_id": event_id, "flag_name": body['flag_name']})
-        
-        # Se tudo deu certo, deleta a mensagem da fila
-        sqs_client.delete_message(
-            QueueUrl=SQS_QUEUE_URL,
-            ReceiptHandle=message['ReceiptHandle']
-        )
-        
-    except json.JSONDecodeError:
-        log.error("Failed to decode JSON from SQS message", extra={"message_id": message['MessageId']})
-    except ClientError as e:
-        log.error("Boto3 error processing message", extra={"message_id": message['MessageId'], "error": str(e)})
-    except Exception as e:
-        log.error("Unexpected error processing message", extra={"message_id": message['MessageId'], "error": str(e)})
+    ) as span:
+        try:
+            log.info("Processing SQS message", extra={"message_id": message['MessageId']})
+            body = json.loads(message['Body'])
+
+            # Gera um ID único para o item no DynamoDB
+            event_id = str(uuid.uuid4())
+
+            # Constrói o item no formato do DynamoDB
+            item = {
+                'event_id': {'S': event_id},
+                'user_id': {'S': body['user_id']},
+                'flag_name': {'S': body['flag_name']},
+                'result': {'BOOL': body['result']},
+                'timestamp': {'S': body['timestamp']}
+            }
+
+            span.set_attributes({
+                "flag_name": body['flag_name'],
+                "user_id": body['user_id'],
+                "db.system": "dynamodb",
+                "db.name": DYNAMODB_TABLE_NAME,
+                "db.operation": "PutItem",
+            })
+
+            # Insere no DynamoDB
+            dynamodb_client.put_item(
+                TableName=DYNAMODB_TABLE_NAME,
+                Item=item
+            )
+
+            log.info("Event saved to DynamoDB", extra={"event_id": event_id, "flag_name": body['flag_name']})
+
+            # Se tudo deu certo, deleta a mensagem da fila
+            sqs_client.delete_message(
+                QueueUrl=SQS_QUEUE_URL,
+                ReceiptHandle=message['ReceiptHandle']
+            )
+
+        except json.JSONDecodeError:
+            span.set_attribute("error", True)
+            log.error("Failed to decode JSON from SQS message", extra={"message_id": message['MessageId']})
+        except ClientError as e:
+            span.set_attribute("error", True)
+            log.error("Boto3 error processing message", extra={"message_id": message['MessageId'], "error": str(e)})
+        except Exception as e:
+            span.set_attribute("error", True)
+            log.error("Unexpected error processing message", extra={"message_id": message['MessageId'], "error": str(e)})
 
 def sqs_worker_loop():
     """Loop principal do worker que ouve a fila SQS"""
@@ -154,11 +176,19 @@ def sqs_worker_loop():
             if not messages:
                 # Nenhuma mensagem, continua o loop
                 continue
-                
+
             log.info(f"Recebidas {len(messages)} mensagens.")
-            
+
             for message in messages:
-                process_message(message)
+                # Novo span raiz por lote garante contexto no Datadog
+                with tracer.start_as_current_span("analytics.sqs_receive",
+                    attributes={
+                        "messaging.system": "aws_sqs",
+                        "messaging.operation": "receive",
+                        "messaging.batch.message_count": len(messages),
+                    }
+                ):
+                    process_message(message)
                 
         except ClientError as e:
             log.error(f"Erro do Boto3 no loop principal do SQS: {e}")
@@ -168,8 +198,6 @@ def sqs_worker_loop():
             time.sleep(10)
 
 # --- Servidor Flask (Apenas para Health Check) ---
-
-app = Flask(__name__)
 
 @app.route('/health')
 def health():
