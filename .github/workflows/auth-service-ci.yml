@@ -157,19 +157,30 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add gitops/services/${{ env.ECR_REPOSITORY }}/deployment.yaml
-          if git diff --cached --quiet; then
-            echo "No GitOps changes to commit"
-            exit 0
-          fi
-          git commit -m "chore(gitops): update ${{ env.ECR_REPOSITORY }} image to ${{ env.IMAGE_TAG }} [skip ci]"
+          FILE="gitops/services/${{ env.ECR_REPOSITORY }}/deployment.yaml"
+
           for i in 1 2 3; do
-            git pull --rebase origin main
+            git fetch origin main
+            git checkout -B ci-gitops-update origin/main
+
+            sed -i "s|image: .*${{ env.ECR_REPOSITORY }}:.*|image: $ECR_REGISTRY/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}|" "$FILE"
+
+            git add "$FILE"
+            if git diff --cached --quiet; then
+              echo "No GitOps changes to commit"
+              exit 0
+            fi
+
+            git commit -m "chore(gitops): update ${{ env.ECR_REPOSITORY }} image to ${{ env.IMAGE_TAG }} [skip ci]"
+
             if git push origin HEAD:main; then
               exit 0
             fi
+
             echo "Push failed due to concurrent updates. Retrying ($i/3)..."
+            git reset --hard HEAD~1
             sleep 2
           done
+
           echo "Failed to push GitOps update after 3 attempts"
           exit 1
