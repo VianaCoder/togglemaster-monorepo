@@ -19,8 +19,8 @@ spec:
           expr: |
             sum by (ingress, service, namespace) (
               rate(nginx_ingress_controller_requests{status=~"5.."}[5m])
-            ) > 0.05
-          for: 2m
+            ) > 0.002
+          for: 1m
           labels:
             severity: critical
             team: platform
@@ -41,8 +41,8 @@ spec:
           expr: |
             sum by (job, namespace) (
               rate(http_requests_total{status=~"5.."}[5m])
-            ) > 0.05
-          for: 2m
+            ) > 0.002
+          for: 1m
           labels:
             severity: critical
             team: platform
@@ -60,8 +60,8 @@ spec:
           expr: |
             sum by (ingress, service, namespace) (
               rate(nginx_ingress_controller_requests{status=~"5.."}[5m])
-            ) > 0.01
-          for: 5m
+            ) > 0.0005
+          for: 2m
           labels:
             severity: warning
             team: platform
