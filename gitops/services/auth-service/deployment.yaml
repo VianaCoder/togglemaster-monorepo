@@ -55,7 +55,7 @@ spec:
                 name: auth-secret
       containers:
         - name: auth-service
-          image: 127214161915.dkr.ecr.us-east-1.amazonaws.com/auth-service:v1.0.0-chaos-demo1
+          image: /auth-service:v1.0.0-47a4a18
           imagePullPolicy: Always
           ports:
             - containerPort: 8001
